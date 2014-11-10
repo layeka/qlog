@@ -33,6 +33,7 @@ func TestQLoger(t *testing.T) {
 	qloger.Trace("trace")
 	go closeQloger()
 	<-done
+	qloger.Trace("trace1111")
 }
 
 func init() {

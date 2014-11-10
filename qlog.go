@@ -92,15 +92,14 @@ func NewQLoger() *QLoger {
 	return qloger
 }
 func (this *QLoger) startLoger() {
-	for {
+	for exit := false; !exit; {
 		select {
 		case buffer := <-this.buffers:
 			for _, writer := range this.writers {
 				writer.WriteMsg(buffer.msg, buffer.level)
 			}
 		case <-this.canClose:
-
-			return
+			exit = true
 		}
 
 	}
