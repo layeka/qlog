@@ -17,6 +17,9 @@ import (
 	"fmt"
 	"path"
 	"runtime"
+	"strings"
+
+	"github.com/layeka/qini"
 )
 
 type QLogLevel int
@@ -28,6 +31,9 @@ const (
 	ERROR
 	WARN
 	CRITICAL
+)
+const (
+	DEFAULTLEVEL = TRACE | DEBUG | INFO | ERROR | WARN | CRITICAL
 )
 
 type QLogWriter interface {
@@ -59,17 +65,29 @@ type qlogbuffer struct {
 type QLoger struct {
 	writers        map[string]QLogWriter
 	buffers        chan *qlogbuffer
+	canClose       chan bool
 	level          QLogLevel
 	enableFuncCall bool
 	funcCallDepth  int
 }
 
-func NewQLoger(bufferlen int) *QLoger {
+func NewQLoger() *QLoger {
+	ini := qini.Load("conf/app.conf")
 	qloger := new(QLoger)
-	qloger.enableFuncCall = true
-	qloger.funcCallDepth = 2
-	qloger.buffers = make(chan *qlogbuffer, bufferlen)
+	qloger.enableFuncCall = ini.DefaultBool("QLoger", "enableFuncCall", true)
+	qloger.funcCallDepth = ini.DefaultInt("QLoger", "funcCallDepth", 2)
+	qloger.level = QLogLevel(ini.DefaultInt("QLoger", "level", int(DEFAULTLEVEL)))
+	qloger.buffers = make(chan *qlogbuffer, ini.DefaultInt("QLoger", "bufferLen", 16))
 	qloger.writers = make(map[string]QLogWriter)
+	qloger.canClose = make(chan bool)
+	factories := strings.Split(ini.DefaultString("QLoger", "factories", "console"), ",")
+	for _, factory := range factories {
+		if f, ok := adapters[factory]; ok {
+			writer := f()
+			writer.Init()
+			qloger.writers[factory] = writer
+		}
+	}
 	go qloger.startLoger()
 	return qloger
 }
@@ -80,7 +98,11 @@ func (this *QLoger) startLoger() {
 			for _, writer := range this.writers {
 				writer.WriteMsg(buffer.msg, buffer.level)
 			}
+		case <-this.canClose:
+
+			return
 		}
+
 	}
 }
 func (this *QLoger) writeMsg(msg string, level QLogLevel) {
@@ -127,5 +149,16 @@ func (this *QLoger) Warn(format string, v ...interface{}) {
 func (this *QLoger) Critical(format string, v ...interface{}) {
 	if CRITICAL&this.level == CRITICAL {
 		this.writeMsg(fmt.Sprintf("[C] "+format, v...), CRITICAL)
+	}
+}
+func (this *QLoger) Flush() {
+	for _, writer := range this.writers {
+		writer.Flush()
+	}
+}
+func (this *QLoger) Close() {
+	this.canClose <- true
+	for _, writer := range this.writers {
+		writer.Destroy()
 	}
 }
